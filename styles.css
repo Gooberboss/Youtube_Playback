@@ -13,3 +13,8 @@ button,input{font:inherit}.topbar{height:76px;padding:0 max(22px,calc((100vw - 1
 .toast{position:fixed;bottom:25px;left:50%;transform:translate(-50%,20px);opacity:0;pointer-events:none;background:#e9efff;color:#111827;padding:10px 16px;border-radius:12px;z-index:30;box-shadow:0 10px 30px #0005;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}footer{text-align:center;color:#65748e;font-size:11px;padding:20px}
 @media(max-width:650px){.topbar{height:66px;padding:0 16px}.shell{padding:20px 15px 40px}.hero{padding:24px 21px;min-height:190px}.hero-icon{width:65px;height:65px;font-size:32px;margin:0 0 0 8px;border-radius:20px;flex-shrink:0}.hero .muted{font-size:13px}.tabs{margin-top:18px}.tab{padding:11px 10px;font-size:13px}.section-head{align-items:flex-start;flex-direction:column}.search{width:100%}.video-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.card-body{padding:10px}.card-title{font-size:13px}.card-meta{font-size:10px}.card-actions{flex-direction:column}.card-actions .button{padding:8px;font-size:12px}.add-grid{grid-template-columns:1fr}.add-card{padding:18px}.player-area{aspect-ratio:16/9}.modal-head{padding:12px 15px}}
 @media(min-width:651px) and (max-width:850px){.video-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* Watch-position resume */
+.resume-bar{position:absolute;left:0;right:0;bottom:0;height:4px;background:#ffffff26}.resume-bar i{display:block;height:100%;background:var(--accent)}
+.player-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+/* Keep non-16:9 (e.g. portrait phone) videos inside the player box so they can't cover the footer buttons */
+.player-area{position:relative;overflow:hidden}.player-area video,.player-area iframe{position:absolute;inset:0}
