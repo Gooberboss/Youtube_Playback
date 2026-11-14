@@ -43,3 +43,7 @@ This app does not download or extract YouTube streams. YouTube links are bookmar
 
 ## YouTube embed Error 153
 The app sets `strict-origin-when-cross-origin` as the document referrer policy and on YouTube iframe embeds. YouTube requires an HTTP Referer or equivalent client identity for embedded playback. Deploy the PWA on a real HTTPS origin and open the app from that website; opening `index.html` directly as a `file://` page, or using a preview/sandbox that suppresses referrers, can still cause Error 153. If an individual video disallows embedding, use its Open on YouTube fallback.
+
+
+## Record from My Library
+Open an item in My Library and use **Record this video**. Imported video files are captured directly from the player, including audio when the browser exposes its audio track. YouTube items use browser tab capture: select the current app tab in the browser sharing picker and enable tab audio. Tab recordings can include the player controls and surrounding app UI. Recordings are saved as new offline video files in this browser's library. This feature requires a desktop browser with MediaRecorder; browser support varies.

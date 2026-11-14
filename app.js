@@ -152,6 +152,12 @@
   async function playItem(id) {
     const item = (await allItems()).find(x => x.id === Number(id)); if (!item) return;
     closePlayback();
+    if (playerRecorder && playerRecorder.state !== "inactive") stopPlayerRecording();
+    playerRecordItem = item;
+    currentLibraryVideo = null;
+    playerRecordUi(false);
+    $("playerRecordStart").disabled = !(window.MediaRecorder && (item.kind === "file" ? true : navigator.mediaDevices?.getDisplayMedia));
+    $("playerRecordStart").textContent = item.kind === "file" ? "● Record this video" : "● Record browser tab";
     const session = playSession;
     const saved = getPosition(item.id);
     const area = $("playerArea"); area.innerHTML = "";
@@ -163,7 +169,7 @@
     if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null; }
     if (item.kind === "file") {
       currentObjectUrl = URL.createObjectURL(item.blob);
-      const video = document.createElement("video"); video.controls = true; video.playsInline = true; video.preload = "metadata"; video.src = currentObjectUrl;
+      const video = document.createElement("video"); currentLibraryVideo = video; video.controls = true; video.playsInline = true; video.preload = "metadata"; video.src = currentObjectUrl;
       // Only start saving after the resume seek, so an early time of 0 can't wipe the saved position.
       let ready = false, lastSave = 0;
       const save = () => { if (ready) setPosition(item.id, video.currentTime, video.duration); };
@@ -252,6 +258,97 @@
     }
     $("playerModal").classList.remove("hidden");
   }
+
+  // Record the item currently open in the library player.
+  let playerRecorder = null, playerRecordChunks = [], playerRecordStream = null, playerRecordStarted = 0, playerRecordItem = null;
+  let currentLibraryVideo = null;
+  function playerRecordUi(recording) {
+    $("playerRecordStart").classList.toggle("hidden", recording);
+    $("playerRecordPause").classList.toggle("hidden", !recording);
+    $("playerRecordStop").classList.toggle("hidden", !recording);
+    $("playerRecordPause").textContent = "❚❚ Pause";
+  }
+  async function startPlayerRecording() {
+    if (playerRecorder && playerRecorder.state !== "inactive") return;
+    const item = playerRecordItem;
+    if (!item) return;
+    try {
+      let stream;
+      if (item.kind === "file") {
+        const video = currentLibraryVideo;
+        const capture = video && (video.captureStream || video.mozCaptureStream);
+        if (!capture) throw new Error("This browser cannot capture video playback directly. Try Chrome or Edge.");
+        stream = capture.call(video);
+        if (!stream.getVideoTracks().length) throw new Error("Start playing the video, then try recording again.");
+      } else {
+        $("playerMessage").textContent = "Choose this browser tab in the sharing picker and enable tab audio.";
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          preferCurrentTab: true,
+          selfBrowserSurface: "include",
+          systemAudio: "include"
+        });
+      }
+      playerRecordStream = stream;
+      const mime = ["video/mp4;codecs=h264,aac","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"]
+        .find(t => MediaRecorder.isTypeSupported(t)) || "";
+      playerRecordChunks = [];
+      playerRecorder = new MediaRecorder(stream, mime ? {mimeType:mime} : undefined);
+      playerRecorder.ondataavailable = e => { if (e.data && e.data.size) playerRecordChunks.push(e.data); };
+      playerRecorder.onstop = async () => {
+        const type = playerRecorder?.mimeType || mime || "video/webm";
+        const blob = new Blob(playerRecordChunks, {type});
+        playerRecordChunks = [];
+        stream.getTracks().forEach(t => t.stop());
+        playerRecordStream = null; playerRecorder = null;
+        playerRecordUi(false);
+        if (!blob.size) { toast("No recording data was captured."); return; }
+        const ext = type.includes("mp4") ? "mp4" : "webm";
+        const stamp = new Date().toLocaleString([], {dateStyle:"medium",timeStyle:"short"});
+        const title = `${item.title} - Recording`;
+        const filename = `${title.replace(/[\\/:*?"<>|]+/g,"-").slice(0,80)}.${ext}`;
+        try {
+          await saveItem({kind:"file",source:"recording",title,filename,blob,size:blob.size,mime:type,createdAt:Date.now()});
+          await renderLibrary(); await updateStorage();
+          $("playerMessage").textContent = `Saved recording to My Library (${formatBytes(blob.size)}).`;
+          toast("Recording saved to My Library.");
+        } catch (err) {
+          const url=URL.createObjectURL(blob), a=document.createElement("a");
+          a.href=url; a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(url),60000);
+          $("playerMessage").textContent = "Library storage was full; downloaded the recording instead.";
+        }
+      };
+      playerRecorder.start(1000);
+      playerRecordStarted = Date.now();
+      playerRecordUi(true);
+      $("playerMessage").textContent = item.kind === "file"
+        ? "Recording this video and its available audio. Press Stop & Save when finished."
+        : "Tab recording started. The selected tab may include the player controls. Press Stop & Save when finished.";
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        if (playerRecorder && playerRecorder.state !== "inactive") playerRecorder.stop();
+      }, {once:true});
+    } catch (err) {
+      $("playerMessage").textContent = `Could not start recording: ${err.message || err}`;
+      toast("Recording could not start.");
+    }
+  }
+  function stopPlayerRecording() {
+    if (playerRecorder && playerRecorder.state !== "inactive") playerRecorder.stop();
+  }
+  $("playerRecordStart").addEventListener("click", startPlayerRecording);
+  $("playerRecordPause").addEventListener("click", () => {
+    if (!playerRecorder) return;
+    if (playerRecorder.state === "recording") {
+      playerRecorder.pause(); $("playerRecordPause").textContent = "▶ Resume";
+      $("playerMessage").textContent = "Recording paused.";
+    } else if (playerRecorder.state === "paused") {
+      playerRecorder.resume(); $("playerRecordPause").textContent = "❚❚ Pause";
+      $("playerMessage").textContent = "Recording resumed.";
+    }
+  });
+  $("playerRecordStop").addEventListener("click", stopPlayerRecording);
+
   async function updateStorage() {
     const items = await allItems(); const bytes = items.filter(x => x.kind === "file").reduce((n, x) => n + (x.size || 0), 0);
     $("storageUsed").textContent = formatBytes(bytes);
@@ -303,6 +400,7 @@
     }
   });
   $("closePlayer").addEventListener("click", () => {
+    if (playerRecorder && playerRecorder.state !== "inactive") stopPlayerRecording();
     closePlayback();
     $("playerModal").classList.add("hidden"); $("playerArea").innerHTML = "";
     if (currentObjectUrl) { URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null; }
