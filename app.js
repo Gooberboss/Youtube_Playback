@@ -37,6 +37,18 @@
     const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
     return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
   }
+  // ---- Playback speed, remembered per video (e.g. a 2x screen recording played back at 0.5x) ----
+  const SPEED_KEY = "my-video-library-speeds";
+  function loadSpeeds() {
+    try { return JSON.parse(localStorage.getItem(SPEED_KEY)) || {}; } catch { return {}; }
+  }
+  function getSpeed(id) { const v = Number(loadSpeeds()[id]); return v > 0 ? v : 1; }
+  function setSpeed(id, rate) {
+    const all = loadSpeeds();
+    if (rate === 1) delete all[id]; else all[id] = rate;
+    try { localStorage.setItem(SPEED_KEY, JSON.stringify(all)); } catch { /* best-effort */ }
+  }
+  function clearSpeed(id) { setSpeed(id, 1); }
   function loadYouTubeApi() {
     if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
     if (!loadYouTubeApi.promise) {
@@ -162,6 +174,7 @@
     const saved = getPosition(item.id);
     const area = $("playerArea"); area.innerHTML = "";
     $("startOver").classList.add("hidden");
+    $("speedWrap").classList.add("hidden");
     $("playerTitle").textContent = item.title;
     $("playerType").textContent = item.kind === "file" ? "Offline video · Stored on this device" : "YouTube · Internet connection required";
     $("playerMessage").textContent = item.kind === "file" ? "This file is stored in this browser." : "This bookmark streams from YouTube; it is not an offline download.";
@@ -170,6 +183,17 @@
     if (item.kind === "file") {
       currentObjectUrl = URL.createObjectURL(item.blob);
       const video = document.createElement("video"); currentLibraryVideo = video; video.controls = true; video.playsInline = true; video.preload = "metadata"; video.src = currentObjectUrl;
+      // Speed: defaultPlaybackRate survives the browser's reload-on-src step; keep pitch natural when slowed/sped up.
+      const rate = getSpeed(item.id);
+      video.defaultPlaybackRate = rate; video.playbackRate = rate; video.preservesPitch = true;
+      $("speedSelect").value = String(rate);
+      $("speedWrap").classList.remove("hidden");
+      $("speedSelect").onchange = () => {
+        const r = parseFloat($("speedSelect").value) || 1;
+        video.defaultPlaybackRate = r; video.playbackRate = r; setSpeed(item.id, r);
+        $("playerMessage").textContent = r === 1 ? "Normal speed." : `Playing at ${r}× speed.`;
+      };
+      if (rate !== 1) $("playerMessage").textContent = `Playing at ${rate}× speed (remembered for this video).`;
       // Only start saving after the resume seek, so an early time of 0 can't wipe the saved position.
       let ready = false, lastSave = 0;
       const save = () => { if (ready) setPosition(item.id, video.currentTime, video.duration); };
@@ -396,7 +420,7 @@
     const btn = e.target.closest("button[data-action]"); if (!btn) return;
     if (btn.dataset.action === "play") await playItem(btn.dataset.id);
     if (btn.dataset.action === "delete") {
-      if (confirm("Remove this item from your library?")) { await deleteItem(btn.dataset.id); clearPosition(btn.dataset.id); await renderLibrary(); await updateStorage(); toast("Removed from library."); }
+      if (confirm("Remove this item from your library?")) { await deleteItem(btn.dataset.id); clearPosition(btn.dataset.id); clearSpeed(btn.dataset.id); await renderLibrary(); await updateStorage(); toast("Removed from library."); }
     }
   });
   $("closePlayer").addEventListener("click", () => {
@@ -419,7 +443,7 @@
   $("clearAllBtn").addEventListener("click", async () => {
     if (!confirm("Delete every imported offline video file? YouTube bookmarks will remain.")) return;
     const items = await allItems();
-    for (const item of items) if (item.kind === "file") { await deleteItem(item.id); clearPosition(item.id); }
+    for (const item of items) if (item.kind === "file") { await deleteItem(item.id); clearPosition(item.id); clearSpeed(item.id); }
     await renderLibrary(); await updateStorage(); toast("Offline files deleted.");
   });
   // ---- Screen recording (desktop Edge/Chrome/Firefox; not available in any iOS browser) ----

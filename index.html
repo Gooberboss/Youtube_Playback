@@ -144,11 +144,11 @@
   <div id="playerModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Video player">
     <div class="modal-head"><div><strong id="playerTitle">Playing video</strong><small id="playerType">Offline video</small></div><button id="closePlayer" class="icon-button" aria-label="Close player">✕</button></div>
     <div id="playerArea" class="player-area"></div>
-    <div class="player-foot"><span id="playerMessage">Playback</span><div class="player-actions"><button id="playerRecordStart" class="button primary" type="button">● Record this video</button><button id="playerRecordPause" class="button secondary hidden" type="button">❚❚ Pause</button><button id="playerRecordStop" class="button secondary hidden" type="button">■ Stop & Save</button><button id="startOver" class="button secondary hidden" type="button">Start over</button><button id="openYoutube" class="button secondary hidden" type="button">Open on YouTube ↗</button></div></div>
+    <div class="player-foot"><span id="playerMessage">Playback</span><div class="player-actions"><label id="speedWrap" class="speed hidden">Speed <select id="speedSelect" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1× (normal)</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><button id="playerRecordStart" class="button primary" type="button">● Record this video</button><button id="playerRecordPause" class="button secondary hidden" type="button">❚❚ Pause</button><button id="playerRecordStop" class="button secondary hidden" type="button">■ Stop & Save</button><button id="startOver" class="button secondary hidden" type="button">Start over</button><button id="openYoutube" class="button secondary hidden" type="button">Open on YouTube ↗</button></div></div>
   </div>
 
   <div id="toast" class="toast" role="status"></div>
-  <footer>Personal video library · Files stay on this device · <span id="appVersion">v1.3</span></footer>
+  <footer>Personal video library · Files stay on this device · <span id="appVersion">v1.4</span></footer>
   <script src="./app.js"></script>
 </body>
 </html>
