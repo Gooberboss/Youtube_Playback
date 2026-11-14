@@ -134,7 +134,7 @@
       const playLabel = pos ? `Resume ${formatTime(pos.time)}` : (isFile ? "Play offline" : "Watch link");
       const leftText = pos ? ` · ${formatTime(pos.duration - pos.time)} left` : "";
       return `<article class="video-card">
-        <div class="thumb">${thumb}<span class="type-pill">${isFile ? "OFFLINE FILE" : "YOUTUBE LINK"}</span>${resumeBar}</div>
+        <div class="thumb">${thumb}<span class="type-pill">${item.source === "recording" ? "RECORDING" : isFile ? "OFFLINE FILE" : "YOUTUBE LINK"}</span>${resumeBar}</div>
         <div class="card-body"><div class="card-title" title="${safeText(item.title)}">${safeText(item.title)}</div>
         <div class="card-meta">${isFile ? `${formatBytes(item.size)} · Stored on this device` : "Streaming link · Internet required"}${leftText}</div>
         <div class="card-actions"><button class="button primary" data-action="play" data-id="${item.id}">${playLabel}</button><button class="button secondary" data-action="delete" data-id="${item.id}">Remove</button></div></div></article>`;
@@ -167,7 +167,21 @@
       // Only start saving after the resume seek, so an early time of 0 can't wipe the saved position.
       let ready = false, lastSave = 0;
       const save = () => { if (ready) setPosition(item.id, video.currentTime, video.duration); };
-      video.addEventListener("loadedmetadata", () => {
+      video.addEventListener("loadedmetadata", async () => {
+        // Browser-made recordings (MediaRecorder WebM) often have no duration in the file, so the
+        // player reports Infinity and seeking/resume break. Seeking far past the end makes the
+        // browser scan the file and find the real length.
+        if (!Number.isFinite(video.duration)) {
+          await new Promise(resolve => {
+            const done = () => { clearTimeout(t); video.removeEventListener("durationchange", check); resolve(); };
+            const check = () => { if (Number.isFinite(video.duration)) done(); };
+            const t = setTimeout(done, 4000);
+            video.addEventListener("durationchange", check);
+            video.currentTime = 1e101;
+          });
+          video.currentTime = 0;
+          if (session !== playSession) return;
+        }
         if (saved && saved.time < video.duration - endMargin(video.duration)) {
           video.currentTime = saved.time;
           $("playerMessage").textContent = `Resumed at ${formatTime(saved.time)}.`;
@@ -310,6 +324,219 @@
     for (const item of items) if (item.kind === "file") { await deleteItem(item.id); clearPosition(item.id); }
     await renderLibrary(); await updateStorage(); toast("Offline files deleted.");
   });
+  // ---- Screen recording (desktop Edge/Chrome/Firefox; not available in any iOS browser) ----
+  // Ported from ScreenRecorder_v2: browser-side scaling with a canvas fallback, plus a Stop
+  // watchdog so the UI can never get stuck if the recorder's "stop" event doesn't fire.
+  const recorder = (() => {
+    const RES_BOX = { orig: null, 1080: [1920, 1080], 720: [1280, 720], 480: [854, 480], 360: [640, 360], 240: [426, 240] };
+    const AUTO_BITRATE = { orig: 4000000, 1080: 4000000, 720: 2000000, 480: 1000000, 360: 600000, 240: 300000 };
+    const supported = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia && window.MediaRecorder);
+    const baseTitle = document.title;
+    let mr = null, chunks = [], displayStream = null, micStream = null, scaler = null;
+    let finalized = true, stopRequested = false, watchdog = null, tick = null;
+    let startedAt = 0, pausedAt = 0, pausedTotal = 0, fallbackBlob = null, fallbackName = "";
+
+    const status = msg => { $("recStatus").textContent = msg; };
+    const even = n => Math.max(2, Math.round(n / 2) * 2);
+    function targetSize(w, h, key) {
+      const box = RES_BOX[key];
+      if (!box || !w || !h) return { w, h };
+      const [bw, bh] = w >= h ? box : [box[1], box[0]];
+      const s = Math.min(1, bw / w, bh / h);
+      return { w: even(w * s), h: even(h * s) };
+    }
+    function bitrate() {
+      const v = $("recBitrate").value;
+      if (v !== "auto") return parseInt(v, 10);
+      const fps = parseInt($("recFps").value, 10);
+      return Math.round(AUTO_BITRATE[$("recRes").value] * Math.max(0.5, Math.min(1.5, fps / 30)));
+    }
+    function updateEstimate() {
+      const bps = bitrate(), perMin = bps * 60 / 8 / 1048576;
+      $("recEstimate").textContent = `About ${perMin < 10 ? perMin.toFixed(1) : Math.round(perMin)} MB per minute of video (plus a little for audio).`;
+    }
+    function mimeType() {
+      const webm = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm;codecs=vp9", "video/webm"];
+      const mp4 = ["video/mp4;codecs=h264,aac", "video/mp4"];
+      const list = $("recFormat").value === "webm" ? webm : [...mp4, ...webm];
+      return list.find(t => MediaRecorder.isTypeSupported(t)) || "";
+    }
+    // Elapsed time from timestamps, not a counter: background timers get throttled.
+    const elapsed = () => !startedAt ? 0 : ((pausedAt || Date.now()) - startedAt - pausedTotal) / 1000;
+    function showTime() {
+      const t = formatTime(elapsed());
+      $("recTime").textContent = t; $("recPillTime").textContent = t;
+      document.title = `${mr && mr.state === "paused" ? "❚❚" : "●"} ${t} · Recording · ${baseTitle}`;
+    }
+    function setRecordingUi(on) {
+      document.querySelectorAll("#recOptions select, #recOptions input, #recTitle").forEach(el => { el.disabled = on; });
+      $("recStart").disabled = on; $("recPause").disabled = !on; $("recStop").disabled = !on;
+      $("recPreviewWrap").classList.toggle("hidden", !on);
+      $("recPill").classList.toggle("hidden", !on);
+      $("recPill").classList.remove("paused");
+      $("recPause").textContent = "❚❚ Pause";
+      if (on) { showTime(); tick = setInterval(showTime, 1000); }
+      else { clearInterval(tick); tick = null; $("recTime").textContent = ""; document.title = baseTitle; }
+    }
+    // Canvas fallback for browsers that ignore resize requests; Worker timer survives background throttling.
+    async function createScaler(track, w, h, fps) {
+      const v = document.createElement("video"); v.muted = true; v.playsInline = true;
+      v.srcObject = new MediaStream([track]); await v.play();
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const ctx = c.getContext("2d", { alpha: false }); ctx.imageSmoothingQuality = "high";
+      const out = c.captureStream(fps);
+      const draw = () => { if (v.readyState >= 2) ctx.drawImage(v, 0, 0, w, h); };
+      draw();
+      let worker = null, iv = null;
+      try {
+        const src = "let t;onmessage=e=>{clearInterval(t);if(e.data>0)t=setInterval(()=>postMessage(0),e.data);};";
+        worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+        worker.onmessage = draw; worker.postMessage(1000 / fps);
+      } catch { iv = setInterval(draw, 1000 / fps); }
+      return { track: out.getVideoTracks()[0], stop() { worker && worker.terminate(); clearInterval(iv); out.getTracks().forEach(t => t.stop()); v.srcObject = null; } };
+    }
+    function cleanup() {
+      if (scaler) { scaler.stop(); scaler = null; }
+      [displayStream, micStream].forEach(s => s && s.getTracks().forEach(t => t.stop()));
+      displayStream = null; micStream = null;
+      const p = $("recPreview"); p.onresize = null; p.srcObject = null;
+    }
+
+    async function start() {
+      if (!finalized) return;
+      $("recDownload").classList.add("hidden"); fallbackBlob = null;
+      status("Choose what to share in the browser’s window…");
+      const fps = parseInt($("recFps").value, 10), key = $("recRes").value;
+      try {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: fps, max: fps } },
+          audio: $("recSysAudio").checked,
+          selfBrowserSurface: "exclude", // hide this app's own tab from the picker (avoids an endless mirror)
+          surfaceSwitching: "include",
+          systemAudio: "include"
+        });
+        const src = displayStream.getVideoTracks()[0];
+        const s = src.getSettings ? src.getSettings() : {};
+        const target = targetSize(s.width || 0, s.height || 0, key);
+        let videoTrack = src, method = "original";
+        if (key !== "orig" && s.width && (target.w < s.width || target.h < s.height)) {
+          try { await src.applyConstraints({ width: { ideal: target.w, max: target.w }, height: { ideal: target.h, max: target.h }, frameRate: { ideal: fps, max: fps } }); } catch { /* unsupported */ }
+          const now = src.getSettings ? src.getSettings() : {};
+          if (now.width && now.width <= target.w + 2 && now.height <= target.h + 2) method = "browser";
+          else { scaler = await createScaler(src, target.w, target.h, fps); videoTrack = scaler.track; method = "canvas"; }
+        }
+        const audio = [...displayStream.getAudioTracks()];
+        if ($("recMic").checked) {
+          try { micStream = await navigator.mediaDevices.getUserMedia({ audio: true }); audio.push(...micStream.getAudioTracks()); }
+          catch { toast("Microphone unavailable; recording without it."); }
+        }
+        const type = mimeType();
+        const opts = { videoBitsPerSecond: bitrate(), audioBitsPerSecond: 96000 };
+        if (type) opts.mimeType = type;
+        chunks = []; finalized = false; stopRequested = false; clearTimeout(watchdog);
+        mr = new MediaRecorder(new MediaStream([videoTrack, ...audio]), opts);
+        mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+        mr.onstop = finalize;
+        mr.onerror = e => status("Recorder error: " + ((e.error && e.error.message) || "unknown. Try WebM or a lower bitrate."));
+        mr.start(1000);
+        startedAt = Date.now(); pausedAt = 0; pausedTotal = 0;
+        // User pressed the browser's own "Stop sharing" bar (works even while this app is hidden).
+        src.addEventListener("ended", () => { if (!finalized) stop(); });
+
+        const preview = $("recPreview");
+        preview.srcObject = new MediaStream([videoTrack]);
+        const note = method === "canvas" ? " Scaled inside the app; keep the app open (minimized is fine)." : "";
+        const realFps = method === "canvas" ? fps : Math.round((videoTrack.getSettings && videoTrack.getSettings().frameRate) || fps);
+        const showSize = () => {
+          if (!preview.videoWidth) return;
+          const size = `${preview.videoWidth}×${preview.videoHeight}`;
+          $("recSize").textContent = `${size} · ${realFps} fps`;
+          if (mr && mr.state === "recording") status(`Recording at ${size}, ~${realFps} fps. You can switch to other apps now.${note}`);
+        };
+        preview.onresize = showSize; preview.onloadedmetadata = showSize;
+        setRecordingUi(true);
+        status("Recording…" + note);
+      } catch (err) {
+        status(err && err.name === "NotAllowedError" ? "Screen sharing was cancelled." : "Couldn’t start recording: " + ((err && err.message) || err));
+        cleanup(); finalized = true; mr = null;
+      }
+    }
+    function togglePause() {
+      if (!mr) return;
+      if (mr.state === "inactive" && !finalized) { finalize(); return; } // escape hatch
+      if (mr.state === "recording") {
+        mr.pause(); pausedAt = Date.now();
+        $("recPause").textContent = "▶ Resume"; $("recPill").classList.add("paused"); status("Paused.");
+      } else if (mr.state === "paused") {
+        mr.resume(); pausedTotal += Date.now() - pausedAt; pausedAt = 0;
+        $("recPause").textContent = "❚❚ Pause"; $("recPill").classList.remove("paused"); status("Recording…");
+      }
+      showTime();
+    }
+    function stop() {
+      if (!mr || finalized) return;
+      if (stopRequested) { finalize(); return; } // second click: finish now
+      stopRequested = true;
+      status("Stopping… (press Stop again to finish right away)");
+      try {
+        if (mr.state === "inactive") { finalize(); return; }
+        try { mr.requestData(); } catch { /* optional */ }
+        mr.stop();
+      } catch { finalize(); return; }
+      watchdog = setTimeout(() => { cleanup(); watchdog = setTimeout(finalize, 2000); }, 3000);
+    }
+    async function finalize() {
+      if (finalized) return;
+      finalized = true; clearTimeout(watchdog);
+      const seconds = elapsed();
+      if (pausedAt) { pausedTotal += Date.now() - pausedAt; pausedAt = 0; }
+      cleanup(); setRecordingUi(false); startedAt = 0;
+      const type = (mr && mr.mimeType) || "video/webm"; mr = null;
+      if (!chunks.length) { status("Recording stopped, but no video was captured. Record for a few seconds before stopping."); return; }
+      const blob = new Blob(chunks, { type }); chunks = [];
+      const ext = type.includes("mp4") ? "mp4" : "webm";
+      const when = new Date();
+      const stamp = when.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      const title = $("recTitle").value.trim() || `Screen recording ${stamp}`;
+      const filename = `${title.replace(/[\\/:*?"<>|]+/g, "-").slice(0, 80)}.${ext}`;
+      status("Saving to your library…");
+      try {
+        await saveItem({ kind: "file", source: "recording", title, filename, blob, size: blob.size, mime: type, duration: Math.round(seconds), createdAt: when.getTime() });
+        $("recTitle").value = "";
+        await renderLibrary(); await updateStorage();
+        status(`Saved “${title}” to your library (${formatBytes(blob.size)}, ${formatTime(seconds)}).`);
+        toast("Recording saved to your library.");
+      } catch (err) {
+        console.error(err);
+        // Don't lose the recording: offer it as a normal download instead.
+        fallbackBlob = blob; fallbackName = filename;
+        $("recDownload").classList.remove("hidden");
+        status(`Couldn’t save to the library (storage may be full). Download it instead (${formatBytes(blob.size)}).`);
+      }
+    }
+    function download() {
+      if (!fallbackBlob) return;
+      const url = URL.createObjectURL(fallbackBlob), a = document.createElement("a");
+      a.href = url; a.download = fallbackName; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    function init() {
+      if (!supported) { $("recUnsupported").classList.remove("hidden"); $("recControls").classList.add("hidden"); return; }
+      ["recRes", "recFps", "recBitrate"].forEach(id => $(id).addEventListener("change", updateEstimate));
+      updateEstimate();
+      $("recStart").addEventListener("click", start);
+      $("recPause").addEventListener("click", togglePause);
+      $("recStop").addEventListener("click", stop);
+      $("recPillStop").addEventListener("click", stop);
+      $("recDownload").addEventListener("click", download);
+      // Warn before closing the app mid-recording, since that would end and discard it.
+      window.addEventListener("beforeunload", e => { if (!finalized) { e.preventDefault(); e.returnValue = ""; } });
+    }
+    return { init, isRecording: () => !finalized, targetSize };
+  })();
+  recorder.init();
+  window.__videoLibraryTest = { recorder };
+
   window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstallPrompt = e; $("installBtn").classList.remove("hidden"); });
   $("installBtn").addEventListener("click", async () => {
     if (!deferredInstallPrompt) return;

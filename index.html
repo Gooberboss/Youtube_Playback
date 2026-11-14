@@ -15,7 +15,13 @@
 <body>
   <header class="topbar">
     <div class="brand"><div class="brand-mark">▶</div><div><strong>My Video Library</strong><small>Stream links · Keep files offline</small></div></div>
-    <button id="installBtn" class="button ghost hidden" type="button">Install app</button>
+    <div class="topbar-actions">
+      <div id="recPill" class="rec-pill hidden" role="status" aria-live="off">
+        <span class="rec-dot" aria-hidden="true"></span><span id="recPillTime">0:00</span>
+        <button id="recPillStop" class="rec-pill-stop" type="button" aria-label="Stop recording">■ Stop</button>
+      </div>
+      <button id="installBtn" class="button ghost hidden" type="button">Install app</button>
+    </div>
   </header>
 
   <main class="shell">
@@ -56,6 +62,67 @@
           <div id="importProgress" class="progress-wrap hidden"><div class="progress"><i id="progressBar"></i></div><small id="progressText">Importing…</small></div>
           <p class="hint">Only import videos you own or have permission to download and store. Large files need enough free device/browser storage.</p>
         </article>
+        <article class="add-card wide" id="recordCard">
+          <div class="card-icon rec">●</div><h3>Record your screen</h3>
+          <p class="muted">Record a screen, window, or browser tab straight into your library. Keeps recording while you use other apps.</p>
+          <div id="recUnsupported" class="notice hidden">This browser can’t record the screen. Screen recording works in Edge or Chrome on a computer. On iPhone, use iOS’s built-in Screen Recording, then import the video above.</div>
+          <div id="recControls">
+            <div class="rec-options" id="recOptions">
+              <label>Resolution
+                <select id="recRes">
+                  <option value="orig">Original</option>
+                  <option value="1080">1080p</option>
+                  <option value="720">720p</option>
+                  <option value="480" selected>480p</option>
+                  <option value="360">360p</option>
+                  <option value="240">240p</option>
+                </select>
+              </label>
+              <label>Frame rate
+                <select id="recFps">
+                  <option value="30" selected>30 fps</option>
+                  <option value="24">24 fps</option>
+                  <option value="15">15 fps</option>
+                  <option value="10">10 fps</option>
+                </select>
+              </label>
+              <label>Bitrate
+                <select id="recBitrate">
+                  <option value="auto" selected>Auto</option>
+                  <option value="4000000">4 Mbps</option>
+                  <option value="2000000">2 Mbps</option>
+                  <option value="1000000">1 Mbps</option>
+                  <option value="500000">500 kbps</option>
+                  <option value="250000">250 kbps</option>
+                </select>
+              </label>
+              <label>Format
+                <select id="recFormat">
+                  <option value="auto" selected>Auto (MP4 if possible)</option>
+                  <option value="webm">WebM (most reliable)</option>
+                </select>
+              </label>
+              <label class="check"><input type="checkbox" id="recSysAudio" checked> System audio</label>
+              <label class="check"><input type="checkbox" id="recMic"> Microphone</label>
+            </div>
+            <label for="recTitle">Title <span class="optional">optional</span></label>
+            <input id="recTitle" type="text" placeholder="Screen recording">
+            <p id="recEstimate" class="hint rec-estimate"></p>
+            <div id="recPreviewWrap" class="rec-preview hidden">
+              <video id="recPreview" autoplay muted playsinline aria-label="Live preview of what is being recorded"></video>
+              <span id="recSize" class="rec-size"></span>
+            </div>
+            <div class="rec-buttons">
+              <button id="recStart" class="button primary" type="button">● Start recording</button>
+              <button id="recPause" class="button secondary" type="button" disabled>❚❚ Pause</button>
+              <button id="recStop" class="button secondary" type="button" disabled>■ Stop</button>
+              <span id="recTime" class="rec-time" aria-hidden="true"></span>
+            </div>
+            <p id="recStatus" class="rec-status" role="status" aria-live="polite"></p>
+            <button id="recDownload" class="button secondary hidden" type="button">⬇ Download recording instead</button>
+            <p class="hint">To keep recording while you use other apps, share your <b>entire screen</b> or the <b>window/tab</b> you’ll be using, then leave this app open (minimizing is fine). Closing this app ends the recording. Only record content you have the right to keep; this isn’t for saving other people’s YouTube videos.</p>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -79,7 +146,7 @@
   </div>
 
   <div id="toast" class="toast" role="status"></div>
-  <footer>Personal video library · Files stay on this device · <span id="appVersion">v1.1</span></footer>
+  <footer>Personal video library · Files stay on this device · <span id="appVersion">v1.2</span></footer>
   <script src="./app.js"></script>
 </body>
 </html>
