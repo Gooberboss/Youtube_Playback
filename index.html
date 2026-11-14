@@ -104,6 +104,7 @@
               </label>
               <label class="check"><input type="checkbox" id="recSysAudio" checked> System audio</label>
               <label class="check"><input type="checkbox" id="recMic"> Microphone</label>
+              <label class="check" title="Records the shared tab’s sound but keeps your speakers quiet. Only works when you share a browser tab."><input type="checkbox" id="recQuiet"> Silent playback (tab only)</label>
             </div>
             <label for="recTitle">Title <span class="optional">optional</span></label>
             <input id="recTitle" type="text" placeholder="Screen recording">
@@ -119,6 +120,7 @@
               <span id="recTime" class="rec-time" aria-hidden="true"></span>
             </div>
             <p id="recStatus" class="rec-status" role="status" aria-live="polite"></p>
+            <p id="recAudioNote" class="rec-status rec-audio" role="status" aria-live="polite"></p>
             <button id="recDownload" class="button secondary hidden" type="button">⬇ Download recording instead</button>
             <p class="hint">To keep recording while you use other apps, share your <b>entire screen</b> or the <b>window/tab</b> you’ll be using, then leave this app open (minimizing is fine). Closing this app ends the recording. Only record content you have the right to keep; this isn’t for saving other people’s YouTube videos.</p>
           </div>
@@ -146,7 +148,7 @@
   </div>
 
   <div id="toast" class="toast" role="status"></div>
-  <footer>Personal video library · Files stay on this device · <span id="appVersion">v1.2</span></footer>
+  <footer>Personal video library · Files stay on this device · <span id="appVersion">v1.3</span></footer>
   <script src="./app.js"></script>
 </body>
 </html>

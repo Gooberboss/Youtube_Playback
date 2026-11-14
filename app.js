@@ -376,7 +376,7 @@
       $("recPill").classList.remove("paused");
       $("recPause").textContent = "❚❚ Pause";
       if (on) { showTime(); tick = setInterval(showTime, 1000); }
-      else { clearInterval(tick); tick = null; $("recTime").textContent = ""; document.title = baseTitle; }
+      else { clearInterval(tick); tick = null; $("recTime").textContent = ""; $("recAudioNote").textContent = ""; document.title = baseTitle; }
     }
     // Canvas fallback for browsers that ignore resize requests; Worker timer survives background throttling.
     async function createScaler(track, w, h, fps) {
@@ -395,7 +395,39 @@
       } catch { iv = setInterval(draw, 1000 / fps); }
       return { track: out.getVideoTracks()[0], stop() { worker && worker.terminate(); clearInterval(iv); out.getTracks().forEach(t => t.stop()); v.srcObject = null; } };
     }
+    // Tells the user whether sound is really being captured, instead of finding out afterwards.
+    let audioCtx = null, audioTimer = null;
+    function stopAudioWatch() {
+      clearInterval(audioTimer); audioTimer = null;
+      if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    }
+    function watchAudio(tracks) {
+      stopAudioWatch();
+      const note = $("recAudioNote");
+      if (!$("recSysAudio").checked) { note.textContent = ""; return; }
+      if (!tracks.length) {
+        note.textContent = "⚠ No audio was shared, so this recording will have no sound. In the sharing window, choose a Tab or Entire screen (not Window) and tick “Also share tab audio” / “Also share system audio”.";
+        return;
+      }
+      note.textContent = "Listening for audio…";
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioCtx.resume().catch(() => {});
+        const analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
+        audioCtx.createMediaStreamSource(new MediaStream(tracks)).connect(analyser); // not routed to speakers
+        const buf = new Float32Array(analyser.fftSize), t0 = Date.now();
+        let heard = false;
+        audioTimer = setInterval(() => {
+          analyser.getFloatTimeDomainData(buf);
+          let peak = 0; for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
+          if (peak > 0.002) heard = true;
+          if (heard) note.textContent = "🔊 Audio detected; it is being recorded.";
+          else if (Date.now() - t0 > 5000) note.textContent = "⚠ Audio is shared but silent so far. If nothing is playing, that’s fine. If something is playing and your computer is muted or at 0 volume, system-wide audio can record as silence. Try a low volume instead, or share a Tab and turn on “Silent playback”.";
+        }, 250);
+      } catch { note.textContent = ""; }
+    }
     function cleanup() {
+      stopAudioWatch();
       if (scaler) { scaler.stop(); scaler = null; }
       [displayStream, micStream].forEach(s => s && s.getTracks().forEach(t => t.stop()));
       displayStream = null; micStream = null;
@@ -410,7 +442,11 @@
       try {
         displayStream = await navigator.mediaDevices.getDisplayMedia({
           video: { frameRate: { ideal: fps, max: fps } },
-          audio: $("recSysAudio").checked,
+          // Processing off so the recorded audio is clean; suppressLocalAudioPlayback keeps the
+          // speakers quiet while the shared tab's audio is still recorded (tab sharing only).
+          audio: $("recSysAudio").checked
+            ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: $("recQuiet").checked }
+            : false,
           selfBrowserSurface: "exclude", // hide this app's own tab from the picker (avoids an endless mirror)
           surfaceSwitching: "include",
           systemAudio: "include"
@@ -426,6 +462,7 @@
           else { scaler = await createScaler(src, target.w, target.h, fps); videoTrack = scaler.track; method = "canvas"; }
         }
         const audio = [...displayStream.getAudioTracks()];
+        const sharedAudio = [...audio]; // what the screen share provided (excludes the microphone)
         if ($("recMic").checked) {
           try { micStream = await navigator.mediaDevices.getUserMedia({ audio: true }); audio.push(...micStream.getAudioTracks()); }
           catch { toast("Microphone unavailable; recording without it."); }
@@ -456,6 +493,7 @@
         preview.onresize = showSize; preview.onloadedmetadata = showSize;
         setRecordingUi(true);
         status("Recording…" + note);
+        watchAudio(sharedAudio);
       } catch (err) {
         status(err && err.name === "NotAllowedError" ? "Screen sharing was cancelled." : "Couldn’t start recording: " + ((err && err.message) || err));
         cleanup(); finalized = true; mr = null;

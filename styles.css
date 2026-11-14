@@ -44,3 +44,4 @@ button,input{font:inherit}.topbar{height:76px;padding:0 max(22px,calc((100vw - 1
 .rec-pill-stop{border:0;background:var(--accent);color:white;border-radius:20px;padding:5px 11px;font-weight:700;font-size:12px;cursor:pointer}
 .rec-options select:focus-visible,.rec-pill-stop:focus-visible,.rec-options input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.rec-dot{animation:none}}
+.rec-audio{margin-top:2px!important;color:#c9d6ef}
